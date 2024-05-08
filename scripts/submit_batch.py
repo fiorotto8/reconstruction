@@ -130,20 +130,13 @@ if __name__ == "__main__":
             with open(options.runlog,"r") as csvfile:
                 csvreader = csv.reader(csvfile, delimiter=',', quotechar='"')
                 next(csvreader) # skips header
-                existing_runs_list = [(int(row[0]),[row[1],row[-12]]) for row in list(csvreader)]
+                existing_runs_list = [(int(row[0]),row[1]) for row in list(csvreader)]
             existing_runs = dict(existing_runs_list)
             if run not in existing_runs.keys():
                 print ("\t=> Run %d not in %s runlog, so skipping it" % (run,options.runlog))
                 continue
-            if options.pedOnly:
-                run2_descr = existing_runs[run][0]
-                pedflag = existing_runs[run][1]
-                if pedflag.replace(' ','')!='':
-                    pedestal = int(pedflag)
-                else:
-                    pedestal = "PED" in run2_descr
-                if not pedestal:
-                    continue
+            if options.pedOnly and "PED" not in existing_runs[run]:
+                continue
         if options.resubmit:
             recofile = '%s/reco_run%05d_3D.root' % (absopath,run)
             if os.path.exists(recofile): continue

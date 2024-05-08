@@ -7,12 +7,12 @@
 
 # DEBUG plots
 'debug_mode'            : 0,
-'ev'                    : 53,
+'ev'                    : 21,
 'nclu'                  : -1,        # -1
 
 # Plots that will be made if debug_mode = 1
 
-'flag_full_image'       : 0,
+'flag_full_image'       : 1,
 'flag_rebin_image'      : 1,
 'flag_edges_image'      : 1,
 'flag_polycluster'      : 1,
@@ -31,20 +31,19 @@
 'numPedEvents'          : -1,
 'pedExclRegion'         : None,
 'rebin'                 : 4,
-'nsigma'                : 1.8,
+'nsigma'                : 0.9,
+'min_neighbors_average' : 1.1,                   # cut on the minimum average energy around a pixel (remove isolated macro-pixels)
 'cimax'                 : 5000,                    # Upper threshold (keep very high not to kill large signals)
-'justPedestal'          : False,
+'justPedestal'          : True,
 'daq'                   : 'midas',                 # DAQ type (btf/h5/midas)
 'type'                  : 'neutrons',              # events type (beam/cosmics/neutrons)
 'tag'                   : 'DataMango',                  # 'Data' for experimental data or 'MC' for Simulated data, DataMango for MANGO data at LNGS
 'vignetteCorr'          : True,                    # apply vignetting correction (correction maps in data/ according to the geometry)
-'environment_variables' : False,                    # if True the environment variables are added to the Tree
 
 'excImages'             : [], #list(range(5))+[],      # To exlude some images of the analysis. Always exclude the first 5 which are messy (not true anymore)
-'min_neighbors_average' : 0.75,                   # cut on the minimum average energy around a pixel (remove isolated macro-pixels)
 'donotremove'           : True,                   # Remove or not the file from the tmp folder
 
-'scfullinfo'            : True,			   # If True some the supercluster pixels info will be saved
+'scfullinfo'            : False,			   # If True some the supercluster pixels info will be saved
 'save_MC_data'          : False,			   # If True save the MC informations
 
 'tip'                   : '3D',
@@ -57,7 +56,7 @@
 'cosmic_killer'         : False,
 
 ### PMT waveform reconstruction
-'pmt_mode'              : 1,
+'pmt_mode'              : 0,
 
 'time_range'            : [7300,7700],
 'threshold'             : 0,

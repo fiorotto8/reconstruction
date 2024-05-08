@@ -6,6 +6,6 @@
 'vignette'    : 'data/vignette_runs03930to03932.root',
 'xmin'        : 0,
 'xmax'        : 2304,
-'ymin'        : 304,
-'ymax'        : 2304-250,
+'ymin'        : 0,
+'ymax'        : 2304,
 }

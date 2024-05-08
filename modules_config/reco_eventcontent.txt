@@ -2,8 +2,8 @@
 
 'scfullinfo'            : True,			   # If True some the supercluster pixels info will be saved
 'scpixels_sel'          :  {                               # To reduce the event content when saving the pixels
-                           'max_len' : 100000,  # remove completely this cut (output files might be much larger)
-                           'min_integral' : 850 # corresponding to about 0.5 keV with the Run3 typical scale
+                           'max_len' : 50,
+                           'min_integral' : 1000
                            },
 
 'save_MC_data'          : False,			   # If True save the MC informations

@@ -120,22 +120,13 @@ def ddbscaninner(data, is_core, neighborhoods, neighborhoods2, labels, dir_radiu
             x = data[labels==label_num][:,0]
             y = data[labels==label_num][:,1]
             if (np.median(np.abs(y - np.median(y))) == 0):
-                try:
-                    ransac = RANSACRegressor(min_samples=0.8, residual_threshold = 0.1)
-                    ransac.fit(np.expand_dims(x, axis=1), y)
-                    accuracy = sum(ransac.inlier_mask_)/len(y)
-                except ValueError as e:
-                    print("RANSAC first attempt error (MAD = 0):", e)
-                    accuracy = 0
+                ransac = RANSACRegressor(min_samples=0.8, residual_threshold = 0.1)
+                ransac.fit(np.expand_dims(x, axis=1), y)
             else:
-                try:
-                    ransac = RANSACRegressor(min_samples=0.8)
-                    ransac.fit(np.expand_dims(x, axis=1), y)
-                    accuracy = sum(ransac.inlier_mask_)/len(y)
-                except ValueError as e:
-                    print("RANSAC first attempt error (MAD > 0):", e)
-                    accuracy = 0
-
+                ransac = RANSACRegressor(min_samples=0.8)
+                ransac.fit(np.expand_dims(x, axis=1), y)
+            
+            accuracy = sum(ransac.inlier_mask_)/len(y)
             if debug:
                 print("-----> accuracy = ",accuracy)
             
@@ -145,22 +136,14 @@ def ddbscaninner(data, is_core, neighborhoods, neighborhoods2, labels, dir_radiu
                 y_rot = x * np.sin(np.pi/4) + (y * np.sin(np.pi/4)) 
                 
                 if (np.median(np.abs(y_rot - np.median(y_rot))) == 0):
-                    try:
-                        ransac = RANSACRegressor(min_samples=0.5, residual_threshold = 0.1)
-                        ransac.fit(np.expand_dims(x_rot, axis=1), y_rot)
-                        accuracy = sum(ransac.inlier_mask_)/len(y_rot)
-                    except ValueError as e:
-                        print("RANSAC after rotation error (MAD = 0):", e)
-                        accuracy = 0
+                    ransac = RANSACRegressor(min_samples=0.5, residual_threshold = 0.1)
+                    ransac.fit(np.expand_dims(x_rot, axis=1), y_rot)
                 else:
-                    try:
-                        ransac = RANSACRegressor(min_samples=0.5)
-                        ransac.fit(np.expand_dims(x_rot, axis=1), y_rot)
-                        accuracy = sum(ransac.inlier_mask_)/len(y_rot)
-                    except ValueError as e:
-                        print("RANSAC after rotation error (MAD > 0):", e)
-                        accuracy = 0
-                        
+                    ransac = RANSACRegressor(min_samples=0.5)
+                    ransac.fit(np.expand_dims(x_rot, axis=1), y_rot)
+
+                accuracy = sum(ransac.inlier_mask_)/len(y_rot)
+                
                 if debug:
                     print("-----> accuracy after rotation = ",accuracy)
             
@@ -184,7 +167,7 @@ def ddbscaninner(data, is_core, neighborhoods, neighborhoods2, labels, dir_radiu
         la_aux = np.copy(labels)
         labels = np.zeros([la_aux.shape[0],2], dtype=np.intp)
         labels[:,0] = la_aux
-        #print("Clustering ends at DBSCAN seeding")
+        print("Clustering ends at DBSCAN seeding")
         return labels
     else:
         #If any cluster has a good fit model, it'll be marked from the worst fitted cluster to the best, each of them respecting the accuracy threshold
@@ -391,7 +374,7 @@ def ddbscaninner(data, is_core, neighborhoods, neighborhoods2, labels, dir_radiu
         noise_indexes = np.where(labels==-1)[0]
         clustered_data = data[poly_indexes]
         neigh = NearestNeighbors(n_neighbors=1, radius=isolation_radius)
-        if len(clustered_data > 0) and len(noise_indexes) > 0:
+        if len(clustered_data > 0):
             neigh.fit(clustered_data)
             distances, isol_neigh_indices = neigh.kneighbors(data[noise_indexes], 1, return_distance=True)
         else:

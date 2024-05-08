@@ -44,12 +44,9 @@ def fitOne(filein,selection,erange,mrange,suffix,energies,nbins,pdir):
     else:
         work.factory('DoubleCBFast::cb1(x[{xmin},{xmax}],mean1,sigma[1,0.8,10],alpha1[1,0.01,10],n1[5,1,20],alpha2[1,0.01,10],n2[5,1,20])'.format(xmin=xmin,xmax=xmax))
     work.factory("expr::mean2('mean1+delta',mean1,delta[{delta}])".format(delta=deltae))
-    if suffix in ['Rb']:
-        work.factory('Cruijff::cb2(x[{xmin},{xmax}],mean2,sigmaL,sigma,alphaL,alphaR)'.format(xmin=xmin,xmax=xmax))
-        # this is to model the Cu peak
-        work.factory("expr::mean3('mean2+deltaCu',mean2,deltaCu[-5.33])")
-        work.factory('Cruijff::cb3(x[{xmin},{xmax}],mean3,sigmaL,sigma,alphaL,alphaR)'.format(xmin=xmin,xmax=xmax))        
-    elif suffix in ['Cu','Fe','Mo','Ag','Ba','Ti','Ca']:
+    if suffix in ['XXX']:
+        work.factory('CBShape::cb2(x[{xmin},{xmax}],mean2,sigma,alpha,n)'.format(xmin=xmin,xmax=xmax))
+    elif suffix in ['Cu','Fe','Rb','Mo','Ag','Ba','Ti','Ca']:
         work.factory('Cruijff::cb2(x[{xmin},{xmax}],mean2,sigmaL,sigma,alphaL,alphaR)'.format(xmin=xmin,xmax=xmax))
     else:
         work.factory('DoubleCBFast::cb2(x[{xmin},{xmax}],mean2,sigma,alpha1,n1,alpha2,n2)'.format(xmin=xmin,xmax=xmax))
@@ -79,9 +76,6 @@ def fitOne(filein,selection,erange,mrange,suffix,energies,nbins,pdir):
         work.factory('nSig3[{ns},0,1e9]'.format(ns=0.7*spectrum.Integral()))
         work.factory("expr::nSig4('nSig3*frac2',nSig3,frac2[0.05,0.0,0.4])")
         work.factory("SUM::pdfTot(nSig1*cb1,nSig2*cb2,nSig3*cb3,nSig4*cb4,nBkg*bkg)");
-    elif suffix in ['Rb']:
-        work.factory('nSig3[{ns},0,1e9]'.format(ns=0.7*spectrum.Integral()))
-        work.factory("SUM::pdfTot(nSig1*cb1,nSig2*cb2,nSig3*cb3,nBkg*bkg)");
     else:
         work.factory("SUM::pdfTot(nSig1*cb1,nSig2*cb2,nBkg*bkg)");
 
@@ -153,9 +147,7 @@ def fitOne(filein,selection,erange,mrange,suffix,energies,nbins,pdir):
     pdf.plotOn(frame,ROOT.RooFit.Components("cb2"), ROOT.RooFit.LineStyle(ROOT.kDotted), ROOT.RooFit.LineColor(ROOT.kOrange), ROOT.RooFit.Name('pcb2'))
     if suffix in ['Ti','Ca']:
         pdf.plotOn(frame,ROOT.RooFit.Components("cb3"), ROOT.RooFit.LineStyle(ROOT.kDashed), ROOT.RooFit.LineColor(ROOT.kSpring+4), ROOT.RooFit.Name('pcb3'))
-        pdf.plotOn(frame,ROOT.RooFit.Components("cb4"), ROOT.RooFit.LineStyle(ROOT.kDashed), ROOT.RooFit.LineColor(ROOT.kSpring+1), ROOT.RooFit.Name('pcb4'))
-    if suffix in ['Rb']:
-        pdf.plotOn(frame,ROOT.RooFit.Components("cb3"), ROOT.RooFit.LineStyle(ROOT.kDashed), ROOT.RooFit.LineColor(ROOT.kSpring+4), ROOT.RooFit.Name('pcb3'))
+        pdf.plotOn(frame,ROOT.RooFit.Components("cb4"), ROOT.RooFit.LineStyle(ROOT.kDashed), ROOT.RooFit.LineColor(ROOT.kSpring+1), ROOT.RooFit.Name('pcb4'))        
     rooData.plotOn(frame,ROOT.RooFit.MarkerStyle(mark))
 
     frame.GetYaxis().SetTitle("superclusters")
@@ -190,9 +182,7 @@ def fitOne(filein,selection,erange,mrange,suffix,energies,nbins,pdir):
     leg.AddEntry("pcb2","Signal Model 2","L")
     if suffix in ['Ti','Ca']:
         leg.AddEntry("pcb3","^{55}Fe Signal Model 1","L")
-        leg.AddEntry("pcb4","^{55}Fe Signal Model 2","L")
-    if suffix in ['Rb']:
-        leg.AddEntry("pcb3","Cu Signal Model","L")
+        leg.AddEntry("pcb4","^{55}Fe Signal Model 2","L")        
     leg.AddEntry("pbkg","Background Model","L")
     leg.Draw("Same")
 
@@ -229,8 +219,7 @@ if __name__ == "__main__":
     base_sel = "(TMath::Hypot(sc_xmean-2304/2,sc_ymean-2304/2)<800)"
 
     materials = ["Ag","Ba","Cu","Rb","Mo","Fe","Ti","Ca"]
-    #materials = ["Rb"]
-    
+
     energies = {"Ca" : [3.69,  4.01],
                 "Ti" : [4.51,  4.93],
                 "Fe" : [5.9,   6.5],

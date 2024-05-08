@@ -1,18 +1,8 @@
-import os
-cythonized=False
-for fname in os.listdir('.'):
-        if fname.endswith('.so'):
-          cythonized=True
-          break
-          
-if cythonized==False:
-          os.system('sh cythonize.sh')
-        
 from concurrent import futures
 from subprocess import Popen, PIPE
 import signal,time
 
-import math,sys,random,re,gc
+import os,math,sys,random,re,gc
 import numpy as np
 
 import ROOT
@@ -20,7 +10,6 @@ ROOT.gROOT.SetBatch(True)
 import uproot
 from cameraChannel import cameraTools, cameraGeometry
 import midas.file_reader
-import h5py
 
 from snakes import SnakesProducer
 from output import OutputTree
@@ -28,20 +17,15 @@ from treeVars import AutoFillTreeProducer
 import swiftlib as sw
 import cygno as cy
 
-import pandas as pd
-
 import utilities
 utilities = utilities.utils()
-
-from waveform import PMTreco
 
 class analysis:
 
     def __init__(self,options):
-        self.rebin = options.rebin        
+        self.rebin = options.rebin
         self.options = options
-        if options.camera_mode:
-            self.pedfile_fullres_name = options.pedfile_fullres_name
+        self.pedfile_fullres_name = options.pedfile_fullres_name
         self.tmpname = options.tmpname
         geometryPSet   = open('modules_config/geometry_{det}.txt'.format(det=options.geometry),'r')
         geometryParams = eval(geometryPSet.read())
@@ -53,54 +37,22 @@ class analysis:
         for k,v in self.eventContentParams.items():
             setattr(self.options,k,v)
         
-
-        if options.camera_mode:
-            if not os.path.exists(self.pedfile_fullres_name):
-                print("WARNING: pedestal file with full resolution ",self.pedfile_fullres_name, " not existing. First calculate them...")
-                self.calcPedestal(options,1)
-            if not options.justPedestal:
-                print("Pulling pedestals...")
-                # first the one for clustering with rebin
-                ctools = cameraTools(self.cg)
-                # then the full resolution one
-                pedrf_fr = uproot.open(self.pedfile_fullres_name)
-                self.pedarr_fr   = pedrf_fr['pedmap'].values().T
-                self.noisearr_fr = pedrf_fr['pedmap'].errors().T
-                if options.vignetteCorr:
-                    self.vignmap = ctools.loadVignettingMap()
-                else:
-                    self.vignmap = np.ones((self.xmax, self.xmax))
-
-        ## Dictionary with the PMT parameters found in config_file
-        self.pmt_params = {
-            'ch_to_read' : options.board_pmt_channels,             
-            'threshold': options.threshold,
-            'height_RMS': options.height_RMS, 
-            'minPeakDistance': options.minPeakDistance, 
-            'prominence': options.prominence,
-            'fixed_prom': options.fixed_prom, 
-            'width': options.width,
-            'resample': options.resample,
-            'plotpy': options.pmt_plotpy,
-            'wf_in_tree': options.pmt_wf_in_tree,
-            'pmt_verb':  options.pmt_verbose,
-            'pmt_outdir': options.plotDir,
-            'include_gem':  options.include_gem,
-            'ch_to_read_gem' : options.board_gem_channels,             
-        }
-        if options.debug_mode == 1:
-            self.pmt_params['pmt_verb']=3
-            self.pmt_params['plotpy']= True
-        if options.pmt_mode and not options.board_pmt_channels:
-            print('\nIt seems you are trying to analyse the PMT signals without selecting their channels. Untoggle PMT mode or add channels.\n ANALYSIS FAILED')
-            sys.exit()
-        if options.include_gem and not options.pmt_mode:
-            print('\nIt seems you are trying to analyse the GEM signals without the PMT Mode On. This does not work.\n ANALYSIS FAILED')
-            sys.exit()
-        if options.include_gem and not options.board_gem_channels:
-            print('\nIt seems you are trying to analyse the GEM signals without selecting their channels. Untoggle GEM mode or add channels.\n ANALYSIS FAILED')
-            sys.exit()
-
+        if not os.path.exists(self.pedfile_fullres_name):
+            print("WARNING: pedestal file with full resolution ",self.pedfile_fullres_name, " not existing. First calculate them...")
+            self.calcPedestal(options,1)
+        if not options.justPedestal:
+           print("Pulling pedestals...")
+           # first the one for clustering with rebin
+           ctools = cameraTools(self.cg)
+           # then the full resolution one
+           pedrf_fr = uproot.open(self.pedfile_fullres_name)
+           self.pedarr_fr   = pedrf_fr['pedmap'].values().T
+           self.noisearr_fr = pedrf_fr['pedmap'].errors().T
+           if options.vignetteCorr:
+               self.vignmap = ctools.loadVignettingMap()
+           else:
+               self.vignmap = np.ones((self.xmax, self.xmax))
+            
 
     # the following is needed for multithreading
     def __call__(self,evrange=(-1,-1,-1)):
@@ -119,38 +71,13 @@ class analysis:
         print("Opening out file: ",outfname," self.outputFile = ",self.outputFile)
         ROOT.gDirectory.cd()
         # prepare output tree
-        if options.camera_mode or options.environment_variables:
-            self.outputTree = ROOT.TTree("Events","Tree containing reconstructed quantities")
-            self.outTree = OutputTree(self.outputFile,self.outputTree)
-            self.autotree = AutoFillTreeProducer(self.outTree,self.eventContentParams)
+        self.outputTree = ROOT.TTree("Events","Tree containing reconstructed quantities")
+        self.outTree = OutputTree(self.outputFile,self.outputTree)
+        self.autotree = AutoFillTreeProducer(self.outTree,self.eventContentParams)
 
-        ## Prepare PMT waveform Tree (1 event = 1 waveform)
-        if options.pmt_mode:
-            self.outputTree_pmt = ROOT.TTree("PMT_Events","Tree containing reconstructed PMT quantities")
-            self.outTree_pmt = OutputTree(self.outputFile,self.outputTree_pmt)
-            self.autotree_pmt = AutoFillTreeProducer(self.outTree_pmt,self.eventContentParams)
-
-            ## Prepare PMT average waveform Tree (1 event = 1 averaged waveform using 4 PMTs)
-            ## Only does average if there are more than one channel
-            if len(self.options.board_pmt_channels) > 1:
-                self.outputTree_pmt_avg = ROOT.TTree("PMT_Avg_Events","Tree containing the average PMT waveforms of 4 channels")
-                self.outTree_pmt_avg = OutputTree(self.outputFile,self.outputTree_pmt_avg)
-                self.autotree_pmt_avg = AutoFillTreeProducer(self.outTree_pmt_avg,self.eventContentParams)
-
-            if options.include_gem:
-                self.outputTree_gem = ROOT.TTree("GEM_Events","Tree containing reconstructed GEM quantities")
-                self.outTree_gem = OutputTree(self.outputFile,self.outputTree_gem)
-                self.autotree_gem = AutoFillTreeProducer(self.outTree_gem,self.eventContentParams)
-
-        if self.options.camera_mode:
-            self.outTree.branch("run", "I", title="run number")
-            self.outTree.branch("event", "I", title="event number")
-            self.outTree.branch("pedestal_run", "I", title="run number used for pedestal subtraction")
-            self.autotree.createCameraVariables()
-            self.autotree.createTimeCameraVariables()
-            self.autotree.createClusterVariables('sc')
-            if self.options.cosmic_killer:
-                self.autotree.addCosmicKillerVariables('sc')
+        self.outTree.branch("run", "I", title="run number")
+        self.outTree.branch("event", "I", title="event number")
+        self.outTree.branch("pedestal_run", "I", title="run number used for pedestal subtraction")
         if self.options.save_MC_data:
 #           self.outTree.branch("MC_track_len","F")
             self.outTree.branch("eventnumber","I")
@@ -168,31 +95,18 @@ class analysis:
             self.outTree.branch("MC_z_vertex_end","F")
             self.outTree.branch("MC_3D_pathlength","F")
             self.outTree.branch("MC_2D_pathlength","F")
-            
-        if options.environment_variables: self.autotree.createEnvVariables()
+
+        if self.options.camera_mode:
+            self.autotree.createCameraVariables()
+            self.autotree.createTimeVariables()
+            self.autotree.createClusterVariables('sc')
+            if self.options.cosmic_killer:
+                self.autotree.addCosmicKillerVariables('sc')
         if self.options.pmt_mode:
-            self.autotree_pmt.createPMTVariables(self.pmt_params)
-            self.autotree_pmt.createTimePMTVariables()
-
-            if len(self.options.board_pmt_channels) > 1:
-                self.autotree_pmt_avg.createPMTVariables_average(self.pmt_params)            
-                self.autotree_pmt_avg.createTimePMTVariables()
-
-            if options.include_gem:
-                self.autotree_gem.createPMTVariables(self.pmt_params)   ## We base GEM analysis on PMT, for now.
-
+            self.autotree.createPMTVariables()
 
     def endJob(self):
-        if options.camera_mode or options.environment_variables:
-            self.outTree.write()
-        
-        if self.options.pmt_mode:
-            self.outTree_pmt.write()
-            if len(self.options.board_pmt_channels) > 1:
-                self.outTree_pmt_avg.write()            
-            if options.include_gem:
-                self.outTree_gem.write()
-        
+        self.outTree.write()
         self.outputFile.Close()
         
     def getNEvents(self,options):
@@ -200,38 +114,20 @@ class analysis:
             tf = sw.swift_read_root_file(self.tmpname)
             pics = [k for k in tf.keys() if 'pic' in k]
             return len(pics)
-        elif options.rawdata_tier == 'h5':
-            tf = sw.swift_read_h5_file(self.tmpname)
-            pics = [k for k in tf.keys() if 'pic' in k]
-            print("n events:", len(pics))
-            return len(pics)
-            
-        run,tmpdir,tag = self.tmpname
-        mf = sw.swift_download_midas_file(run,tmpdir,tag)     #you download the file here so that in multithread does not confuse if it downloaded or not
-        if options.offline==False:
-            df = cy.read_cygno_logbook(tag=options.tag,start_run=run-2000,end_run=run+1)
         else:
-            runlog='runlog_%s_auto.csv' % (options.tag)
-            df = pd.read_csv('pedestals/%s'%runlog)
-        if df.run_number.isin({int(options.run)}).any():
-           dffilter = df["run_number"] == int(options.run)
-           try:
-              evs = int(df.number_of_events[dffilter].values.tolist()[0])
-              return evs
-           except ValueError:
-              print('Probably number of events line in data frame is empty. Opening and counting the file events\n')
-     
-        evs =0
-        for mevent in mf:
-            if mevent.header.is_midas_internal_event():
-               continue
-            else:
-                keys = mevent.banks.keys()
-            for iobj,key in enumerate(keys):
-                name=key
-                if name.startswith('CAM'):
-                    evs += 1
-        return evs
+            run,tmpdir,tag = self.tmpname
+            mf = sw.swift_download_midas_file(run,tmpdir,tag)
+            evs =0
+            for mevent in mf:
+                if mevent.header.is_midas_internal_event():
+                    continue
+                else:
+                    keys = mevent.banks.keys()
+                for iobj,key in enumerate(keys):
+                    name=key
+                    if name.startswith('CAM'):
+                        evs += 1
+            return evs
 
     def calcPedestal(self,options,alternativeRebin=-1):
         maxImages=options.maxEntries
@@ -246,7 +142,7 @@ class analysis:
 
         pedsum = np.zeros((nx,ny))
 
-        if options.rawdata_tier == 'root' or options.rawdata_tier == 'h5':
+        if options.rawdata_tier == 'root':
             tmpdir = '{tmpdir}'.format(tmpdir=options.tmpdir if options.tmpdir else "/tmp/")
             if not sw.checkfiletmp(int(options.pedrun),'root',tmpdir):
                 print ('Downloading file: ' + sw.swift_root_file(options.tag, int(options.pedrun)))
@@ -273,23 +169,26 @@ class analysis:
                 for iobj,key in enumerate(keys):
                     name=key
                     if name.startswith('CAM'):
-                        arr,_,_ = cy.daq_cam2array(mevent.banks[key])
-                        arr = np.rot90(arr)
+                        if options.rawdata_tier == 'root':
+                            arr = tf[key].values()
+                        else:
+                            arr,_,_ = cy.daq_cam2array(mevent.banks[key])
+                            arr = np.rot90(arr)
                         justSkip=False
-                        if (numev in self.options.excImages) and self.options.justPedestal: justSkip=True
-                        if (maxImages>-1 and numev>min(len(keys),maxImages)) and self.options.justPedestal: break
-                        if numev>200: break # no need to compute pedestals with >200 evts (avoid large RAM usage)
+                        if numev in self.options.excImages: justSkip=True
+                        if maxImages>-1 and numev>min(len(keys),maxImages): break
+                        if numev>100: break # no need to compute pedestals with >100 evts (avoid large RAM usage)
                             
                         if numev%20 == 0:
                             print("Calc pedestal mean with event: ",numev)
                         if justSkip:
-                            continue
+                             continue
                         if rebin>1:
                             ctools.arrrebin(arr,rebin)
                         pedsum = np.add(pedsum,arr)
                         numev += 1
         else:
-            #print ("keys = ",keys)
+            print ("keys = ",keys)
             for i,name in enumerate(keys):
                 if 'pic' in name:
                     patt = re.compile('\S+run(\d+)_ev(\d+)')
@@ -297,9 +196,9 @@ class analysis:
                     run = int(m.group(1))
                     event = int(m.group(2))
                 justSkip=False
-                if (numev in self.options.excImages) and self.options.justPedestal: justSkip=True
-                if (maxImages>-1 and numev>min(len(keys),maxImages)) and self.options.justPedestal: break
-                if numev>100: break # no need to compute pedestals with >100 evts (uproot issue)
+                if event in self.options.excImages: justSkip=True
+                if maxImages>-1 and event>min(len(keys),maxImages): break
+                if numev>100: break # no need to compute pedestals with >100 evts (avoid large RAM usage)
                 if 'pic' not in name: justSkip=True
                 if justSkip:
                     continue
@@ -317,19 +216,23 @@ class analysis:
         if  options.rawdata_tier == 'midas':
             mf.jump_to_start()
             for mevent in mf:
-                if mevent.header.is_midas_internal_event():
-                    continue
-                else:
-                    keys = mevent.banks.keys()
+                if  options.rawdata_tier == 'midas':
+                    if mevent.header.is_midas_internal_event():
+                        continue
+                    else:
+                        keys = mevent.banks.keys()
                 for iobj,key in enumerate(keys):
                     name=key
                     if name.startswith('CAM'):
-                        arr,_,_ = cy.daq_cam2array(mevent.banks[key])
-                        arr = np.rot90(arr)
+                        if options.rawdata_tier == 'root':
+                            arr = tf[key].values()
+                        else:
+                            arr,_,_ = cy.daq_cam2array(mevent.banks[key])
+                            arr = np.rot90(arr)
                         justSkip=False
-                        if (numev in self.options.excImages) and self.options.justPedestal: justSkip=True
-                        if (maxImages>-1 and numev>min(len(keys),maxImages)) and self.options.justPedestal: break
-                        if numev>200: break # no need to compute pedestals with >200 evts (avoid large RAM usage)
+                        if numev in self.options.excImages: justSkip=True
+                        if maxImages>-1 and numev>min(len(keys),maxImages): break
+                        if numev>100: break # no need to compute pedestals with >100 evts (avoid large RAM usage)
              
                         if numev%20 == 0:
                             print("Calc pedestal rms with event: ",numev)
@@ -347,13 +250,13 @@ class analysis:
                     run = int(m.group(1))
                     event = int(m.group(2))
                 justSkip=False
-                if (numev in self.options.excImages) and self.options.justPedestal: justSkip=True
-                if (maxImages>-1 and numev>min(len(keys),maxImages)) and self.options.justPedestal: break
-                if numev>100: break # no need to compute pedestals with >100 evts (uproot issue)
+                if event in self.options.excImages: justSkip=True
+                if maxImages>-1 and event>min(len(keys),maxImages): break
+                if numev>100: break # no need to compute pedestals with >100 evts (avoid large RAM usage)
+     
                 if 'pic' not in name: justSkip=True
                 if justSkip:
                      continue
-
                 if event%20 == 0:
                     print("Calc pedestal rms with event: ",event)
                 arr = tf[name].values()
@@ -398,84 +301,23 @@ class analysis:
             tf = sw.swift_read_root_file(self.tmpname)
             keys = tf.keys()
             mf = [0] # dummy array to make a common loop with MIDAS case
-        elif self.options.rawdata_tier == 'h5':
-            tf = sw.swift_read_h5_file(self.tmpname)
-            keys = tf.keys()
-            mf = [0] # dummy array to make a common loop with MIDAS case
-
-        elif self.options.rawdata_tier == 'midas':
+        else:
             run,tmpdir,tag = self.tmpname
             mf = sw.swift_download_midas_file(run,tmpdir,tag)
-            
-            ## Necessary to read the ODB to retrieve some info necessary for the waveform analysis
-            ## Seems to repeat the opening process but *doesn't* slow down the code.
-            if self.options.pmt_mode == 1:        
-                
-                odb,corrected,channels_offsets,camera_exposure = utilities.get_odb_pmt_info(mf,self.options,run)
 
-            mf.jump_to_start()
-            dslow = pd.DataFrame()
-            if self.options.environment_variables:
-        
-                odb = cy.get_bor_odb(mf)
-                header_environment = odb.data['Equipment']['Environment']['Settings']['Names Input']
-                value_variables = odb.data['Equipment']['Environment']['Variables']
-                dslow = pd.DataFrame(columns = header_environment)
-                dslow.loc[len(dslow)] = value_variables['Input']
-                for i in dslow.keys():
-                    #try:
-                    dslow = utilities.conversion_env_variables(dslow, odb, i, j_env = 0)
-                    #except:
-                        #print("WARNING: conversion_env_variables failed.")
-                try:
-                   self.autotree.fillEnvVariables(dslow.take([0]))
-                   if not self.options.camera_mode:
-                            self.outTree.fill()
-                except:
-                   print("WARNING: could not fill dslow variables.")   
-                #print(dslow)
-
-                j_env = 1
-
-        numev = 0
-        event=0
-        camera_read = False         #only useful for midas read 
-        pmt_read = False            #only useful for midas read... FIX: is it fine to use only camera_read in the for of mevent but before keys loop? probably yes
-        if self.options.pmt_mode == 0:
-            pmt_read = True
-        
-        exist_pmt = False
-        exist_cam = False
-        fails_count = 0
-
+        numev = -1
+        event=-1
+        if  options.rawdata_tier == 'midas': mf.jump_to_start()
         for mevent in mf:
             if self.options.rawdata_tier == 'midas':
                 if mevent.header.is_midas_internal_event():
                     continue
                 else:
                     keys = mevent.banks.keys()
-
-            if camera_read and pmt_read:
-                numev +=1   
-            camera_read = False         #only useful for midas read 
-            pmt_read = False            #only useful for midas read
-            if self.options.pmt_mode == 0:
-                pmt_read = True
-            else:
-                if exist_cam and not exist_pmt:
-                    fails_count +=1
-                    if fails_count==3:
-                        print('\nCareful: you set the PMT analysis ON but no PMT bank was found. Are you sure PMT data is available for this run?\n ANALYSIS FAILED')
-                        sys.exit()
-                    else:
-                         exist_pmt = False
-                         exist_cam = False   
-
+                    
             for iobj,key in enumerate(keys):
                 name=key
                 camera = False
-                pmt = False
-
 
                 if self.options.rawdata_tier == 'root':
                     if 'pic' in name:
@@ -486,72 +328,20 @@ class analysis:
                         obj = tf[key].values()
                         #obj = np.rot90(obj)
                         camera=True
-
-                elif self.options.rawdata_tier == 'h5':
-                    if 'pic' in name:
-                        patt = re.compile('\S+run(\d+)_ev(\d+)')
-                        m = patt.match(name)
-                        run = int(m.group(1))
-                        event = int(m.group(2))
-                        obj = np.array(tf[key])
-                        #obj = np.rot90(obj)
-                        camera=True
-
+                    else:
+                        camera=False
                 elif self.options.rawdata_tier == 'midas':
                     run = int(self.options.run)
                     if name.startswith('CAM'):
-                        camera_read = True
-                        exist_cam = True
-                        if options.camera_mode:
-                            obj,_,_ = cy.daq_cam2array(mevent.banks[key])
-                            obj = np.rot90(obj)
-                            camera=True
-                    
-                    elif name.startswith('INPT') and self.options.environment_variables: # SLOW channels array
-                        #try:
-                        dslow = utilities.read_env_variables(mevent.banks[key], dslow, odb, j_env=j_env)
-                        self.autotree.fillEnvVariables(dslow.take([j_env]))
-                        j_env = j_env+1
-                        if not self.options.camera_mode:
-                            if self.options.jobs != 1:
-                                if numev>=evrange[1]: self.outTree.fill()
-                            else:
-                                self.outTree.fill()
-                           #print(dslow)
-                        #except:
-                        #   print("WARNING: INPT bank is not as expected.")
-                    
-                    elif name.startswith('DGH0'):
-                        pmt_read = True
-                        exist_pmt = True
-                        fast_digitizer = False
-                        slow_digitizer = False
-                        if self.options.pmt_mode:
-                            header=cy.daq_dgz_full2header(mevent.banks[key], verbose=False)
-                            # sample_rate = header.sampling_rate
-
-                            ## Care: if tag is MC$blabla, the tag for the digitizer will have to be changed to LNGS or something
-                            waveform_f, waveform_s = cy.daq_dgz_full2array(mevent.banks['DIG0'], header, verbose=False, corrected=corrected, ch_offset=channels_offsets,tag=self.options.tag)
-
-                            for idigi,digitizer in enumerate(header.boardNames):
-
-                                if str(digitizer) == '1742' and len(waveform_f):  
-
-                                    fast_digitizer = True
-                                    nChannels_f  = header.nchannels[idigi]
-                                    nTriggers_f = len(header.TTT[idigi])
-                                    TTTs_f = header.TTT[idigi]
-
-                                elif str(digitizer) == '1720' and len(waveform_s):
-                                    
-                                    slow_digitizer = True
-                                    nChannels_s  = header.nchannels[idigi]
-                                    nTriggers_s = len(header.TTT[idigi])
-                                    TTTs_s = header.TTT[idigi]
-
-                            pmt = True
-
+                        obj,_,_ = cy.daq_cam2array(mevent.banks[key])
+                        obj = np.rot90(obj)
+                        camera=True
+                        numev += 1
+                    else:
+                        camera=False
                     event=numev
+
+                # print("    peak memory: {} MB".format(utilities.peak_memory_usage()))
 
                 justSkip = False
                 if event<evrange[1]: justSkip=True
@@ -560,38 +350,40 @@ class analysis:
                 if self.options.debug_mode == 1 and event != self.options.ev: justSkip=True
                 if justSkip:
                     continue
-
+                
+                if camera==True:
+                    print("Processing Run: ",run,"- Event ",event,"...")
+                    
+                    testspark=2*100*self.cg.npixx*self.cg.npixx+9000000		#for ORCA QUEST data multiply also by 2: 2*100*....
+                    if np.sum(obj)>testspark:
+                        print("Run ",run,"- Event ",event," has spark, will not be analyzed!")
+                        continue
+                                
+                    self.outTree.fillBranch("run",run)
+                    self.outTree.fillBranch("event",event)
+                    self.outTree.fillBranch("pedestal_run", int(self.options.pedrun))
+                    if self.options.save_MC_data:
+                        mc_tree = tf.Get('event_info/info_tree')
+                        mc_tree.GetEntry(event)
+                        self.outTree.fillBranch("eventnumber",mc_tree.eventnumber)
+                        self.outTree.fillBranch("particle_type",mc_tree.particle_type)
+                        self.outTree.fillBranch("energy",mc_tree.energy_ini)
+                        self.outTree.fillBranch("ioniz_energy",mc_tree.ioniz_energy)
+                        self.outTree.fillBranch("drift",mc_tree.drift)
+                        self.outTree.fillBranch("phi_initial",mc_tree.phi_ini)
+                        self.outTree.fillBranch("theta_initial",mc_tree.theta_ini)
+                        self.outTree.fillBranch("MC_x_vertex",mc_tree.x_vertex)
+                        self.outTree.fillBranch("MC_y_vertex",mc_tree.y_vertex)
+                        self.outTree.fillBranch("MC_z_vertex",mc_tree.z_vertex)
+                        self.outTree.fillBranch("MC_x_vertex_end",mc_tree.x_vertex_end)
+                        self.outTree.fillBranch("MC_y_vertex_end",mc_tree.y_vertex_end)
+                        self.outTree.fillBranch("MC_z_vertex_end",mc_tree.z_vertex_end)
+                        self.outTree.fillBranch("MC_2D_pathlength",mc_tree.proj_track_2D)
+                        self.outTree.fillBranch("MC_3D_pathlength",mc_tree.track_length_3D)
+         
                 if self.options.camera_mode:
                     if camera==True:
-                        print("Processing Run: ",run,"- Event ",event,"Camera...")
-                        self.outTree.fillBranch("run",run)
-                        self.outTree.fillBranch("event",event)
-                        self.outTree.fillBranch("pedestal_run", int(self.options.pedrun))
-                    
-                        testspark=2*100*self.cg.npixx*self.cg.npixx+9000000		#for ORCA QUEST data multiply also by 2: 2*100*....
-                        if np.sum(obj)>testspark:
-                            print("Run ",run,"- Event ",event," has spark, will not be analyzed!")
-                            continue
-
-                        if self.options.save_MC_data:
-                            mc_tree = tf.Get('event_info/info_tree')
-                            mc_tree.GetEntry(event)
-                            self.outTree.fillBranch("eventnumber",mc_tree.eventnumber)
-                            self.outTree.fillBranch("particle_type",mc_tree.particle_type)
-                            self.outTree.fillBranch("energy",mc_tree.energy_ini)
-                            self.outTree.fillBranch("ioniz_energy",mc_tree.ioniz_energy)
-                            self.outTree.fillBranch("drift",mc_tree.drift)
-                            self.outTree.fillBranch("phi_initial",mc_tree.phi_ini)
-                            self.outTree.fillBranch("theta_initial",mc_tree.theta_ini)
-                            self.outTree.fillBranch("MC_x_vertex",mc_tree.x_vertex)
-                            self.outTree.fillBranch("MC_y_vertex",mc_tree.y_vertex)
-                            self.outTree.fillBranch("MC_z_vertex",mc_tree.z_vertex)
-                            self.outTree.fillBranch("MC_x_vertex_end",mc_tree.x_vertex_end)
-                            self.outTree.fillBranch("MC_y_vertex_end",mc_tree.y_vertex_end)
-                            self.outTree.fillBranch("MC_z_vertex_end",mc_tree.z_vertex_end)
-                            self.outTree.fillBranch("MC_2D_pathlength",mc_tree.proj_track_2D)
-                            self.outTree.fillBranch("MC_3D_pathlength",mc_tree.track_length_3D)
-
+             
                         img_fr = obj.T
          
                         # Upper Threshold full image
@@ -644,204 +436,55 @@ class analysis:
                         t_DBSCAN_1 = time.perf_counter()
                         snakes, t_DBSCAN, t_variables, lp_len, t_medianfilter, t_noisered = snprod.run()
                         t_DBSCAN_2 = time.perf_counter()
-                        if self.options.debug_mode == 1:
+                        if options.debug_mode == 1:
                             print(f"1. DBSCAN run + variables calculation in {t_DBSCAN_2 - t_DBSCAN_1:0.4f} seconds")
                         self.autotree.fillCameraVariables(img_fr_zs)
                         t_DBSCAN_3 = time.perf_counter()
-                        if self.options.debug_mode == 1:
+                        if options.debug_mode == 1:
                             print(f"fillCameraVariables in {t_DBSCAN_3 - t_DBSCAN_2:0.4f} seconds")
                         self.autotree.fillClusterVariables(snakes,'sc')
                         t_DBSCAN_4 = time.perf_counter()
-                        self.autotree.fillTimeCameraVariables(t_variables, t_DBSCAN, lp_len, t_pedsub, t_saturation, t_zerosup, t_xycut, t_rebin, t_medianfilter, t_noisered)
-                        if self.options.debug_mode == 1:
+                        self.autotree.fillTimeVariables(t_variables, t_DBSCAN, lp_len, t_pedsub, t_saturation, t_zerosup, t_xycut, t_rebin, t_medianfilter, t_noisered)
+                        if options.debug_mode == 1:
                             print(f"fillClusterVariables in {t_DBSCAN_4 - t_DBSCAN_3:0.04f} seconds")
                             print()
                         del img_fr_sub,img_fr_satcor,img_fr_zs,img_fr_zs_acc,img_rb_zs
-                        self.outTree.fill()
+         
+                    # to be ported to uproot
+                    # if self.options.pmt_mode:
+                    #     if obj.InheritsFrom('TGraph'):
+                    #         # PMT waveform reconstruction
+                    #         from waveform import PeakFinder,PeaksProducer
+                    #         wform = tf.Get('wfm_'+'_'.join(name.split('_')[1:]))
+                    #         # sampling was 5 GHz (5/ns). Rebin by 5 (1/ns)
+                    #         pkprod_inputs = {'waveform': wform}
+                    #         pkprod_params = {'threshold': options.threshold, # min threshold for a signal (baseline is -20 mV)
+                    #                          'minPeakDistance': options.minPeakDistance, # number of samples (1 sample = 1ns )
+                    #                          'prominence': options.prominence, # noise after resampling very small
+                    #                          'width': options.width, # minimal width of the signal
+                    #                          'resample': options.resample,  # to sample waveform at 1 GHz only
+                    #                          'rangex': (self.options.time_range[0],self.options.time_range[1]),
+                    #                          'plotpy': options.pmt_plotpy
+                    #         }
+                    #         pkprod = PeaksProducer(pkprod_inputs,pkprod_params,self.options)
+                            
+                    #         peaksfinder = pkprod.run()
+                    #         self.autotree.fillPMTVariables(peaksfinder,0.2*pkprod_params['resample'])
+         
+                    if self.options.camera_mode:
+                        if camera==True:
+                            self.outTree.fill()
+                            
+                    if camera==True:
                         del obj
                         
-         
-                if self.options.pmt_mode:
-                    if pmt == True:
-                        print("Processing Run: ",run,"- Event ",event,"PMT...")
-                        t00_wave =  time.perf_counter()
-                        chs_to_analyse = len(self.options.board_pmt_channels)
-                        fast_sampling = 1024
-                        slow_sampling = 4000
-
-                        ## Fast waveforms
-                        if fast_digitizer:
-                            if self.options.debug_mode == 1:
-                                print("Number of fast triggers: {}".format(nTriggers_f))
-
-                            for trg in range(nTriggers_f):    
-
-                                insideGE = 0
-                                # Uses the TTTs to check this condition
-                                if (TTTs_f[trg] * 8.5/1000/1000) >= 180 and (TTTs_f[trg] * 8.5/1000/1000) <= (camera_exposure*1000):
-                                    insideGE = 1
-
-                                # Prepare the weighted average waveform 
-                                sing_weig_avg_fast_wf = [ [0]*fast_sampling for _ in range(chs_to_analyse)]  
-                                fast_wf_weights_snr = [0] * chs_to_analyse
-                                weight_average_wf = [0]* fast_sampling
-
-                                for ichf,chf in enumerate(self.options.board_pmt_channels):
-
-                                    indx = trg * nChannels_f + chf
-                                    waveform_info = { 'run' : run, 'event': event, 'channel' : chf, 'trigger' : trg , 'GE' : insideGE, 'sampling' : "fast", 'TTT' : (TTTs_f[trg]*8.5/1000./1000.)}
-
-                                    t0_waveforms = time.perf_counter()
-
-                                    fast_waveform = PMTreco(waveform_info, waveform_f[indx], self.pmt_params)
-                                    fast_waveform.__repr__()
-
-                                    t1_waveforms = time.perf_counter()
-                                    t_waveforms = t1_waveforms - t0_waveforms
-
-                                    self.autotree_pmt.fillPMTVariables(fast_waveform) 
-                                    self.autotree_pmt.fillTimePMTVariables(t_waveforms)
-                                    self.outTree_pmt.fill()
-
-                                    # Weighted averaged waveform (weight = SNR)
-                                    snr_ratio = fast_waveform.getSignalToNoise()
-                                    fast_wf_weights_snr[ichf] = snr_ratio
-                                    sing_weig_avg_fast_wf[ichf] = waveform_f[indx]
-
-                                    # If one wants to visualize the new weighted waveforms,
-                                    # meaning how much they actual weight for the final average, 
-                                    # Ask David for the script changes
-
-                                    if len(self.options.board_pmt_channels) > 1 and chf == self.options.board_pmt_channels[-1]:
-
-                                        fast_wf_weights_snr = [ (x / max(fast_wf_weights_snr)) for x in fast_wf_weights_snr ]   # Normalization of the weights
-                                        
-                                        for k in range(chs_to_analyse):
-                                        
-                                            for j in range(fast_sampling):
-
-                                                weight_average_wf[j] += sing_weig_avg_fast_wf[k][j]*fast_wf_weights_snr[k]/sum(fast_wf_weights_snr)
-
-                                        waveform_info_fast_wei_avg = { 'run' : run, 'event': event, 'channel' : 9, 'trigger' : trg, 'GE' : 9, 'sampling' : "fast"}
-
-                                        t0_waveforms = time.perf_counter()
-                                        fast_waveform_wei_avg = PMTreco(waveform_info_fast_wei_avg, weight_average_wf, self.pmt_params)
-                                        t1_waveforms = time.perf_counter()
-                                        t_waveforms = t1_waveforms - t0_waveforms
-
-                                        self.autotree_pmt_avg.fillPMTVariables_average(fast_waveform_wei_avg)
-                                        self.autotree_pmt_avg.fillTimePMTVariables(t_waveforms)
-                                        #fast_waveform_wei_avg.__repr__()           ## Verbose of averaged waveform
-                                        self.outTree_pmt_avg.fill()
-
-                                        del waveform_info_fast_wei_avg
-                                        del fast_waveform_wei_avg
-
-                                    del waveform_info
-                                    del fast_waveform
-                                
-                                # GEM readout. Only available for fast digitizer
-                                # No computing time properties for GEM for now.
-                                if options.include_gem:
-                                    for ichf_gem,chf_gem in enumerate(self.options.board_gem_channels):
-
-                                        indx = trg * nChannels_f + chf_gem
-                                        waveform_info = { 'run' : run, 'event': event, 'channel' : chf_gem, 'trigger' : trg , 'GE' : insideGE, 'sampling' : "fast", 'TTT' : (TTTs_f[trg]*8.5/1000./1000.)}
-
-                                        fast_gem_waveform = PMTreco(waveform_info, waveform_f[indx], self.pmt_params)
-                                        # fast_gem_waveform.__repr__()
-
-                                        self.autotree_gem.fillPMTVariables(fast_gem_waveform) 
-                                        self.outTree_gem.fill()
-
-                                        del fast_gem_waveform
-
-                            del waveform_f
-
-                        # Slow waveforms
-                        if slow_digitizer:
-                            if self.options.debug_mode == 1:
-                                print("Number of slow triggers: {}".format(nTriggers_s))
-
-                            for trg in range(nTriggers_s):    
-
-                                insideGE = 0
-                                if (TTTs_s[trg] * 8.5/1000/1000) >= 180 and (TTTs_s[trg] * 8.5/1000/1000) <= (camera_exposure*1000):
-                                    insideGE = 1
-
-                                sing_weig_avg_slow_wf = [ [0]* slow_sampling for _ in range(chs_to_analyse)]  
-                                slow_wf_weights_snr = [0] * chs_to_analyse
-                                weight_average_wf = [0]* slow_sampling
-
-                                for ichs,chs in enumerate(self.options.board_pmt_channels):
-
-                                    indx = trg * nChannels_s + chs
-                                    waveform_info = { 'run' : run, 'event': event, 'channel' : chs, 'trigger' : trg , 'GE' : insideGE , 'sampling' : "slow", 'TTT' : (TTTs_s[trg]*8.5/1000./1000.)}
-                                    
-                                    t0_waveforms = time.perf_counter()
-
-                                    slow_waveform = PMTreco(waveform_info, waveform_s[indx], self.pmt_params)
-                                    slow_waveform.__repr__()
-
-                                    t1_waveforms = time.perf_counter()
-                                    t_waveforms = t1_waveforms - t0_waveforms
-
-                                    self.autotree_pmt.fillPMTVariables(slow_waveform) 
-                                    self.autotree_pmt.fillTimePMTVariables(t_waveforms)
-                                    self.outTree_pmt.fill()
-
-                                    snr_ratio = slow_waveform.getSignalToNoise()
-                                    slow_wf_weights_snr[ichs] = snr_ratio
-                                    sing_weig_avg_slow_wf[ichs] = waveform_s[indx]
-
-                                    if len(self.options.board_pmt_channels) > 1 and chs == self.options.board_pmt_channels[-1]:
-
-                                        slow_wf_weights_snr = [ (x / max(slow_wf_weights_snr)) for x in slow_wf_weights_snr ]   # Normalization of the weights
-
-                                        for k in range(chs_to_analyse):
-
-                                            for j in range(slow_sampling):
-
-                                                weight_average_wf[j] += sing_weig_avg_slow_wf[k][j]*slow_wf_weights_snr[k]/sum(slow_wf_weights_snr)
-
-                                        waveform_info_slow_wei_avg = { 'run' : run, 'event': event, 'channel' : 9, 'trigger' : trg, 'GE' : 9, 'sampling' : "slow"}
-
-                                        t0_waveforms = time.perf_counter()
-                                        slow_waveform_wei_avg = PMTreco(waveform_info_slow_wei_avg, weight_average_wf, self.pmt_params)
-                                        t1_waveforms = time.perf_counter()
-                                        t_waveforms = t1_waveforms - t0_waveforms
-
-                                        self.autotree_pmt_avg.fillPMTVariables_average(slow_waveform_wei_avg)
-                                        self.autotree_pmt_avg.fillTimePMTVariables(t_waveforms)
-                                        #slow_waveform_wei_avg.__repr__()           ## Verbose of averaged waveform
-                                        self.outTree_pmt_avg.fill()
-
-                                        del waveform_info_slow_wei_avg
-                                        del slow_waveform_wei_avg
-
-                                    del waveform_info
-                                    del slow_waveform
-
-                                # ... There is no slow board for GEM signals 
-                                # for ichs_gem,chs_gem in enumerate(self.options.board_gem_channels):
-
-                            del waveform_s
-
-                        del header
-                        
-                        t01_wave =  time.perf_counter()
-                        if self.options.debug_mode == 1:
-                            print(f'PMT Reco Code Took: {t01_wave - t00_wave} seconds')
-                        # END of `if pmt`
-                # END of `if self.options.pmt_mode`
-                
         gc.collect()
-             
+                    
         ROOT.gErrorIgnoreLevel = savErrorLevel
                 
 if __name__ == '__main__':
     from optparse import OptionParser
-    t0 = time.perf_counter()
+    
     parser = OptionParser(usage='%prog h5file1,...,h5fileN [opts] ')
     parser.add_option('-r', '--run', dest='run', default='00000', type='string', help='run number with 5 characteres')
     parser.add_option('-j', '--jobs', dest='jobs', default=1, type='int', help='Jobs to be run in parallel (-1 uses all the cores available)')
@@ -851,9 +494,8 @@ if __name__ == '__main__':
     parser.add_option('-t',  '--tmp',  dest='tmpdir', default=None, type='string', help='Directory where to put the input file. If none is given, /tmp/<user> is used')
     parser.add_option(      '--max-hours', dest='maxHours', default=-1, type='float', help='Kill a subprocess if hanging for more than given number of hours.')
     parser.add_option('-o', '--outname', dest='outname', default='reco', type='string', help='prefix for the output file name')
-    parser.add_option('-d', '--outdir', dest='outdir', default='.', type='string', help='Directory where to save the output file')
-    parser.add_option(      '--git', dest='githash', default=None, type='string', help='git hash of the version of the reco code in use which you may want to give manually')
-        
+    parser.add_option('-d', '--outdir', dest='outdir', default='./', type='string', help='Directory where to save the output file')
+    
     (options, args) = parser.parse_args()
     
     f = open(args[0], "r")
@@ -870,46 +512,50 @@ if __name__ == '__main__':
         #if options.daq == 'midas': options.ev +=0.5 
     else:
         setattr(options,'outFile','%s_run%05d_%s.root' % (options.outname, run, options.tip))
-    # FIX: if only pmt mode, don't need to compute pedestal
-    if options.camera_mode:
-        utilities.setPedestalRun(options)        
+    
+    patt = re.compile('\S+_(\S+).txt')
+    m = patt.match(args[0])
+    detector = m.group(1)
+    if run > 16798 :
+        utilities.setPedestalRun_v2(options,detector)
+    else:
+        utilities.setPedestalRun(options,detector)
+        
         
     try:
         USER = os.environ['USER']
         flag_env = 0
-    except:
-        flag_env = 1
+    except KeyError:
         try:
-          USER = os.environ['JUPYTERHUB_USER']
+            flag_env = 1
+            USER = os.environ['JUPYTERHUB_USER']
         except:
-          USER = "autoreco"
+            #for cronjob
+            flag_env = 2
+            USER = "cygnus"
     #tmpdir = '/mnt/ssdcache/' if os.path.exists('/mnt/ssdcache/') else '/tmp/'
     # it seems that ssdcache it is only mounted on cygno-login, not in the batch queues (neither in cygno-custom)
-    tmpdir = '/tmp'
+    tmpdir = '/tmp/'
     os.system('mkdir -p {tmpdir}/{user}'.format(tmpdir=tmpdir,user=USER))
     tmpdir = '{tmpdir}/{user}/'.format(tmpdir=tmpdir,user=USER) if not options.tmpdir else options.tmpdir+"/"
     if sw.checkfiletmp(int(options.run),options.rawdata_tier,tmpdir):
         if options.rawdata_tier=='root':
             prefix = 'histograms_Run'
             postfix = 'root'
-        elif options.rawdata_tier=='h5':
-            prefix = 'histograms_Run'
-            postfix = 'h5'
         else:
             prefix = 'run'
             postfix = 'mid.gz'
         options.tmpname = "%s/%s%05d.%s" % (tmpdir,prefix,int(options.run),postfix)
     else:
         if options.rawdata_tier == 'root':
-            file_url = sw.swift_root_file(options.tag, int(options.run))
-            print ('Downloading file: ' + file_url)
-            options.tmpname = sw.swift_download_root_file(file_url,int(options.run),tmpdir)
+            print ('Downloading file: ' + sw.swift_root_file(options.tag, int(options.run)))
+            options.tmpname = sw.swift_download_root_file(sw.swift_root_file(options.tag, int(options.run)),int(options.run),tmpdir)
         else:
             print ('Downloading MIDAS.gz file for run ' + options.run)
-    # in case of MIDAS, download function checks the existence and in case it is absent, downloads it. If present, opens it
+    # in case of MIDAS, download function checks the existence and in case it is absent, dowloads it. If present, opens it
     if options.rawdata_tier == 'midas':
         ## need to open it (and create the midas object) in the function, otherwise the async run when multithreaded will confuse events in the two threads
-        options.tmpname = [int(options.run),tmpdir,options.tag]		#This line needs to be corrected if MC data will be in midas format. Not foreseen at all
+        options.tmpname = [int(options.run),tmpdir,options.tag]
     if options.justPedestal:
         ana = analysis(options)
         print("Pedestals done. Exiting.")
@@ -919,12 +565,9 @@ if __name__ == '__main__':
 
     ana = analysis(options)
     nev = ana.getNEvents(options)
-    print("\nThis run has ",nev," events.")
-    if options.debug_mode == 1: print('DEBUG mode activated. Only event',options.ev,'will be analysed')
-    # FIX: the option for saving plots should only be ON only fi camera mode is ON
-    print("I Will save plots to ",options.plotDir)
+    print("This run has ",nev," events.")
+    print("Will save plots to ",options.plotDir)
     os.system('cp utils/index.php {od}'.format(od=options.plotDir))
-    os.system('mkdir -p {pdir}'.format(pdir=options.plotDir))
     
     nThreads = 1
     if options.jobs==-1:
@@ -936,17 +579,12 @@ if __name__ == '__main__':
     t1 = time.perf_counter()
     firstEvent = 0 if options.firstEvent<0 else options.firstEvent
     lastEvent = nev if options.maxEntries==-1 else min(nev,firstEvent+options.maxEntries)
-    if options.debug_mode == 1: lastEvent = min(nev,int(options.ev))
-    
     print ("Analyzing from event %d to event %d" %(firstEvent,lastEvent))
     base = options.outFile.split('.')[0]
     if nThreads>1:
         print ("RUNNING USING ",nThreads," THREADS.")
         nj = int(nev/nThreads) if options.maxEntries==-1 else max(int((lastEvent-firstEvent)/nThreads),1)
         chunks = [(ichunk,i,min(i+nj-1,nev)) for ichunk,i in enumerate(range(firstEvent,lastEvent,nj))]
-        if len(chunks)>nThreads:
-            chunks[-2] = (chunks[-2][0],chunks[-2][1],chunks[-1][2])
-            del chunks[-1]
         print("Chunks = ",chunks)
         with futures.ProcessPoolExecutor(nThreads) as executor:
             futures_list = [executor.submit(ana,c) for c in chunks]
@@ -956,8 +594,10 @@ if __name__ == '__main__':
         print("Now hadding the chunks...")
         if flag_env == 0:
             os.system('hadd -k -f {outdir}/{base}.root {outdir}/{base}_chunk*.root'.format(base=base, outdir=options.outdir))
-        else:
+        elif flag_env==1:
             os.system('/usr/bin/hadd -k -f {outdir}/{base}.root {outdir}/{base}_chunk*.root'.format(base=base, outdir=options.outdir))
+        else:
+            os.system('/home/cygnus/root/bin/hadd -k -f {outdir}/{base}.root {outdir}/{base}_chunk*.root'.format(base=base, outdir=options.outdir))
         os.system('rm {outdir}/{base}_chunk*.root'.format(base=base, outdir=options.outdir))
     else:
         evrange=(-1,firstEvent,lastEvent)
@@ -966,28 +606,14 @@ if __name__ == '__main__':
     if options.debug_mode == 1:
         print(f'Reconstruction Code Took: {t2 - t1} seconds')
 
-    # now add extra information
-    tf = ROOT.TFile.Open("{outdir}/{base}.root".format(base=base, outdir=options.outdir),'update')
-    # now add parameters of the reconstruction
-    utilities.Param_storage(tf,base,args[0],options)
+    """
     # now add the git commit hash to track the version in the ROOT file
-    if options.githash != None:
-       githash=ROOT.TNamed("gitHash",options.githash)
-       githash.Write()       
-    else:
-       try:
-          githash = ROOT.TNamed("gitHash",str(utilities.get_git_revision_hash()).replace("\\n'","").replace("b'",""))
-          githash.Write()
-       except:
-          print('No githash provided nor githash found (no .git folder?)') 
-    # now add the time of reconstruction
+    tf = ROOT.TFile.Open("{outdir}/{base}.root".format(base=base, outdir=options.outdir),'update')
+    githash = ROOT.TNamed("gitHash",str(utilities.get_git_revision_hash()).replace('\n',''))
+    githash.Write()
     total_time = ROOT.TNamed("total_time", str(t2-t1))
     total_time.Write()
     tf.Close()
-    
+    """
     if options.donotremove == False:
         sw.swift_rm_root_file(options.tmpname)
-    
-    t3 = time.perf_counter()
-    if options.debug_mode == 1:
-           print(f'Total time the Code Took: {t3 - t0} seconds')

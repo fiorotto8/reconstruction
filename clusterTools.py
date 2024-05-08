@@ -25,8 +25,8 @@ class Cluster:
             self.nclu = clID
             self.ID=[]
             self.IDall=[]
-
-            if self.integral()>0 and self.sizeActive()>0  and self.size()<1000000:		#tries to avoid to save cluster with zero integral or too big (like with afterglow of pixels)
+            #if self.integral()>0 and self.hits_fr_zs != [] and self.size()<1000000:		#tries to avoid to save cluster with zero integral or too big (like with afterglow of pixels)
+            if self.integral()>0 and len(self.hits_fr_zs)>0 and self.size()<1000000:		#tries to avoid to save cluster with zero integral or too big (like with afterglow of pixels)
                   self.nintpixels = self.sizeActive()
                   self.nallintpixels = self.size()
                   for k in range(self.nintpixels):
@@ -44,7 +44,8 @@ class Cluster:
                   self.nintpixels = 1
                   self.IDall.append(-1)
                   self.nallintpixels = 1
-                  if self.sizeActive()>0:
+                  #if self.hits_fr_zs != []:
+                  if len(self.hits_fr_zs)>0:
                       self.xpixelcoord= self.hits_fr_zs[int(self.sizeActive()/2):int(self.sizeActive()/2)+1,0]
                       self.ypixelcoord= self.hits_fr_zs[int(self.sizeActive()/2):int(self.sizeActive()/2)+1,1]
                       self.zpixel= self.hits_fr_zs[int(self.sizeActive()/2):int(self.sizeActive()/2)+1,2]
@@ -328,16 +329,16 @@ class Cluster:
             return
         self.getProfile(name)
 
-        from profiling import PeakFinder,simplePeak
+        from waveform import PeakFinder,simplePeak
 
         # find first the length/width with intersection of the base of the large peak
-        #threshold = 3
-        #min_distance_peaks = 5 # number of bins of the profile, to be converted in mm later... TO DO
-        #prominence = 2 # noise seems <1
-        #width = 10  # find only 1 big peak
-        #pf = PeakFinder(self.profiles[name])        
-        #pf.findPeaks(threshold,min_distance_peaks,prominence,width)
-        #self.widths[name] = pf.getFWHMs()[0] if len(pf.getFWHMs()) else 0 # first should be the only big peak
+        # threshold = 3
+        # min_distance_peaks = 5 # number of bins of the profile, to be converted in mm later... TO DO
+        # prominence = 2 # noise seems <1
+        # width = 10  # find only 1 big peak
+        # pf = PeakFinder(self.profiles[name])        
+        # pf.findPeaks(threshold,min_distance_peaks,prominence,width)
+        # self.widths[name] = pf.getFWHMs()[0] if len(pf.getFWHMs()) else 0 # first should be the only big peak
         self.shapes['%s_width' % name] = self.widths[name]
         
         # find the peaks and store their properties

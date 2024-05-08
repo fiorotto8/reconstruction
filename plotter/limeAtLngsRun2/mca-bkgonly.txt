@@ -1,5 +1,5 @@
-bkg    : merged_golden_run2_rereco : 1 ; FillColor=ROOT.kBlue+1, FillStyle=3004, Label="No source" 
-fakes+ : merged_golden_ped_run2_rereco : 1 ; FillColor=ROOT.kRed+1, Label="Fakes"
+bkg    : merged_golden_run2 : 1 ; FillColor=ROOT.kBlue+1, FillStyle=3004, Label="No source" 
+fakes+ : merged_golden_ped_run2 : 1 ; FillColor=ROOT.kRed+1, Label="Fakes"
 #data   : merged_golden_calib_run2 : 1 ; FillColor=ROOT.kRed+1, Label="Source"
-data   : merged_golden_calib_run2_rereco : (7828./887.)*(run==11285 || run==11587 || run==11956 || run==12172) ; FillColor=ROOT.kRed+1, Label="Source"
+data   : merged_golden_calib_run2 : (7828./887.)*(run==11285 || run==11587 || run==11956 || run==12172) ; FillColor=ROOT.kRed+1, Label="Source"
 #data  : merged_feruns_8882_9857 : 1 ;  FillColor=ROOT.kRed+1, Label="Source"
